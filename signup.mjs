@@ -1,56 +1,52 @@
-const SUPA = "https://ygyaoulwimaknuebagjf.supabase.co";
 const SITE = "https://eevx.app";
-const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlneWFvdWx3aW1ha251ZWJhZ2pmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2MTEzMjYsImV4cCI6MjEwNDE4NzMyNn0.Gyy5P1D5woPdpOCOrlFB7bHveVT3AHOjCINLGWe2EgA";
 const EMAIL = process.env.EMAIL, PASSWORD = process.env.PASSWORD;
+const jar = {};
+const clean = s => (s || "").replace(/\s+/g, " ").slice(0, 400);
 
-const clean = s => (s || "").replace(/\s+/g, " ").slice(0, 200);
 async function req(url, opts = {}) {
-  try {
-    const r = await fetch(url, { redirect: "manual", ...opts });
-    const hs = {}; r.headers.forEach((v, k) => { if (k.startsWith("x-") || k === "content-type") hs[k] = v; });
-    return { s: r.status, hs, b: await r.text() };
-  } catch (e) { return { s: "ERR", hs: {}, b: String(e) }; }
+  const r = await fetch(url, { redirect: "manual", ...opts });
+  const sc = r.headers.getSetCookie ? r.headers.getSetCookie() : [];
+  sc.forEach(c => { const kv = c.split(";")[0]; const i = kv.indexOf("=");
+    if (i > 0) jar[kv.slice(0, i).trim()] = kv.slice(i + 1); });
+  return { s: r.status, sc, b: await r.text() };
 }
-const J = o => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(o) });
-const show = r => `${r.s}  ${clean(r.b)}  ${JSON.stringify(r.hs)}`;
+const cookies = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join("; ");
 
-console.log("=== [1] IS /api/auth/* A CATCH-ALL? ===");
-for (const p of ["/api/auth", "/api/auth/", "/api/auth/zzz", "/api/auth/foo/bar", "/api/auth/register"]) {
+console.log("=== [1] NEXTAUTH ENDPOINTS ===");
+for (const p of ["/api/auth/providers", "/api/auth/session", "/api/auth/csrf",
+                 "/api/auth/signin", "/api/auth/error"]) {
   const r = await req(SITE + p);
-  console.log(`  ${p.padEnd(26)} ${show(r)}`);
+  console.log(`\n  ${p} -> ${r.s}\n    ${clean(r.b)}`);
+  if (r.sc.length) console.log(`    set-cookie: ${r.sc.map(c => c.split("=")[0]).join(", ")}`);
 }
 
-console.log("\n=== [2] ACTION NAMES ===");
-for (const a of ["register", "signup", "sign-up", "create", "create-account", "join",
-                 "invite", "verify", "confirm", "resend", "otp", "magic", "new"]) {
-  const r = await req(`${SITE}/api/auth/${a}`, J({ email: EMAIL, password: PASSWORD }));
-  console.log(`  ${a.padEnd(16)} ${show(r)}`);
-}
+console.log("\n=== [2] CREDENTIALS LOGIN ===");
+const csrf = await req(SITE + "/api/auth/csrf");
+let csrfToken = ""; try { csrfToken = JSON.parse(csrf.b).csrfToken; } catch {}
+console.log("  csrfToken:", csrfToken ? csrfToken.slice(0, 24) + "..." : "(none)");
 
-console.log("\n=== [3] NON-EMPTY PARAM VARIANTS ===");
-const V = [
-  ["base",         { email: EMAIL, password: PASSWORD }],
-  ["code",         { email: EMAIL, password: PASSWORD, code: "TEST" }],
-  ["inviteCode",   { email: EMAIL, password: PASSWORD, inviteCode: "TEST" }],
-  ["invite",       { email: EMAIL, password: PASSWORD, invite: "TEST" }],
-  ["token",        { email: EMAIL, password: PASSWORD, token: "TEST" }],
-  ["captchaToken", { email: EMAIL, password: PASSWORD, captchaToken: "TEST" }],
-  ["turnstile",    { email: EMAIL, password: PASSWORD, turnstileToken: "TEST" }],
-  ["cfT",          { email: EMAIL, password: PASSWORD, cfTurnstileResponse: "TEST" }],
-  ["confirm",      { email: EMAIL, password: PASSWORD, confirmPassword: PASSWORD }],
-  ["everything",   { email: EMAIL, password: PASSWORD, confirmPassword: PASSWORD, confirm: PASSWORD,
-                     name: "Tester", username: "tester", code: "TEST", inviteCode: "TEST",
-                     invite: "TEST", token: "TEST", captchaToken: "TEST",
-                     turnstileToken: "TEST", cfTurnstileResponse: "TEST" }],
-];
-for (const route of ["/api/auth/register", "/api/auth/signup"]) {
-  console.log(`\n  -- ${route}`);
-  for (const [label, o] of V) console.log(`    ${label.padEnd(14)} ${show(await req(SITE + route, J(o)))}`);
-}
+const form = new URLSearchParams({ csrfToken, email: EMAIL, password: PASSWORD, json: "true" });
+const login = await req(SITE + "/api/auth/callback/credentials", {
+  method: "POST",
+  headers: { "content-type": "application/x-www-form-urlencoded", cookie: cookies() },
+  body: form.toString(),
+});
+console.log(`  -> ${login.s}\n    ${clean(login.b)}`);
+if (login.sc.length) console.log(`    set-cookie: ${login.sc.map(c => c.split("=")[0]).join(", ")}`);
 
-console.log("\n=== [4] EXTRA HEADERS ===");
-for (const h of [{ origin: SITE }, { "x-requested-with": "XMLHttpRequest" }, { accept: "application/json" }]) {
-  const r = await req(SITE + "/api/auth/register",
-    { ...J({ email: EMAIL, password: PASSWORD }), headers: { "content-type": "application/json", ...h } });
-  console.log(`  ${JSON.stringify(h).padEnd(42)} ${show(r)}`);
+console.log("\n=== [3] SESSION AFTER LOGIN ===");
+const sess = await req(SITE + "/api/auth/session", { headers: { cookie: cookies() } });
+console.log(`  ${sess.s}  ${clean(sess.b)}`);
+
+console.log("\n=== [4] COOKIE JAR ===");
+console.log("  " + (Object.keys(jar).join(", ") || "(empty)"));
+
+if (sess.b && sess.b.trim() !== "{}" && sess.b.trim() !== "null") {
+  console.log("\n=== [5] ENTITLEMENTS WITH SESSION ===");
+  for (const u of ["/api/membership/v1/me", "/api/membership/v1/state",
+    "/api/membership/v1/access", "/api/membership/v1/tiers", "/api/membership/v1/pricing",
+    "/api/storage/v1/entitlements", "/api/storage/v1/me"]) {
+    const r = await req(SITE + u, { headers: { cookie: cookies() } });
+    console.log(`\n  ${u}\n    ${r.s} ${clean(r.b)}`);
+  }
 }
