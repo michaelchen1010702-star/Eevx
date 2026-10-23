@@ -1,76 +1,56 @@
 const SUPA = "https://ygyaoulwimaknuebagjf.supabase.co";
 const SITE = "https://eevx.app";
 const ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlneWFvdWx3aW1ha251ZWJhZ2pmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2MTEzMjYsImV4cCI6MjEwNDE4NzMyNn0.Gyy5P1D5woPdpOCOrlFB7bHveVT3AHOjCINLGWe2EgA";
-const EMAIL = process.env.EMAIL;
-const PASSWORD = process.env.PASSWORD;
+const EMAIL = process.env.EMAIL, PASSWORD = process.env.PASSWORD;
 
-const clean = s => (s || "").replace(/\s+/g, " ").slice(0, 240);
+const clean = s => (s || "").replace(/\s+/g, " ").slice(0, 200);
 async function req(url, opts = {}) {
-  try { const r = await fetch(url, { redirect: "manual", ...opts });
-        return { s: r.status, loc: r.headers.get("location"), b: await r.text() }; }
-  catch (e) { return { s: "ERR", b: String(e) }; }
+  try {
+    const r = await fetch(url, { redirect: "manual", ...opts });
+    const hs = {}; r.headers.forEach((v, k) => { if (k.startsWith("x-") || k === "content-type") hs[k] = v; });
+    return { s: r.status, hs, b: await r.text() };
+  } catch (e) { return { s: "ERR", hs: {}, b: String(e) }; }
 }
-const title = h => (h.match(/<title>([^<]*)<\/title>/) || [])[1] || "(none)";
+const J = o => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(o) });
+const show = r => `${r.s}  ${clean(r.b)}  ${JSON.stringify(r.hs)}`;
 
-console.log("=== [1] WHICH PAGES ARE REAL? ===");
-for (const p of ["/sign-up", "/signup", "/register", "/join", "/create-account", "/auth/sign-up"]) {
+console.log("=== [1] IS /api/auth/* A CATCH-ALL? ===");
+for (const p of ["/api/auth", "/api/auth/", "/api/auth/zzz", "/api/auth/foo/bar", "/api/auth/register"]) {
   const r = await req(SITE + p);
-  console.log(`  ${String(r.s).padEnd(4)} ${p.padEnd(16)} title="${title(r.b)}"${r.loc ? "  -> " + r.loc : ""}`);
+  console.log(`  ${p.padEnd(26)} ${show(r)}`);
 }
 
-console.log("\n=== [2] FOLLOW /register ===");
-let u = "/register", hops = 0;
-while (hops++ < 5) {
-  const r = await req(SITE + u);
-  console.log(`  ${String(r.s).padEnd(4)} ${u}${r.loc ? "  -> " + r.loc : ""}`);
-  if (!r.loc) break;
-  u = r.loc.startsWith("http") ? new URL(r.loc).pathname + new URL(r.loc).search : r.loc;
+console.log("\n=== [2] ACTION NAMES ===");
+for (const a of ["register", "signup", "sign-up", "create", "create-account", "join",
+                 "invite", "verify", "confirm", "resend", "otp", "magic", "new"]) {
+  const r = await req(`${SITE}/api/auth/${a}`, J({ email: EMAIL, password: PASSWORD }));
+  console.log(`  ${a.padEnd(16)} ${show(r)}`);
 }
 
-console.log("\n=== [3] PARAM HINTS ON /sign-up ===");
-const sp = await req(SITE + "/sign-up");
-for (const k of ["code", "token", "invite", "turnstile", "captcha", "email", "password", "referral"]) {
-  const hits = [...sp.b.matchAll(new RegExp(k, "gi"))].length;
-  if (hits) console.log(`  ${k.padEnd(12)} ${hits} hit(s)`);
-}
-const q = sp.b.match(/[?&](code|token|invite|ref)=/g);
-console.log("  url param patterns:", q ? [...new Set(q)].join(" ") : "(none)");
-
-console.log("\n=== [4] BODY SHAPE BRUTE FORCE ===");
-const ROUTES = ["/api/auth/register", "/api/auth/signup", "/api/auth/sign-up"];
-const VARIANTS = [
-  ["plain",    { email: EMAIL, password: PASSWORD }],
-  ["confirm",  { email: EMAIL, password: PASSWORD, confirmPassword: PASSWORD }],
-  ["invite",   { email: EMAIL, password: PASSWORD, inviteCode: "" }],
-  ["code",     { email: EMAIL, password: PASSWORD, code: "" }],
-  ["token",    { email: EMAIL, password: PASSWORD, token: "" }],
-  ["name",     { email: EMAIL, password: PASSWORD, name: "Tester" }],
-  ["superset", { email: EMAIL, password: PASSWORD, confirmPassword: PASSWORD,
-                 confirm: PASSWORD, passwordConfirm: PASSWORD, name: "Tester",
-                 username: "tester", inviteCode: "", code: "", token: "",
-                 captchaToken: "x", turnstileToken: "x" }],
+console.log("\n=== [3] NON-EMPTY PARAM VARIANTS ===");
+const V = [
+  ["base",         { email: EMAIL, password: PASSWORD }],
+  ["code",         { email: EMAIL, password: PASSWORD, code: "TEST" }],
+  ["inviteCode",   { email: EMAIL, password: PASSWORD, inviteCode: "TEST" }],
+  ["invite",       { email: EMAIL, password: PASSWORD, invite: "TEST" }],
+  ["token",        { email: EMAIL, password: PASSWORD, token: "TEST" }],
+  ["captchaToken", { email: EMAIL, password: PASSWORD, captchaToken: "TEST" }],
+  ["turnstile",    { email: EMAIL, password: PASSWORD, turnstileToken: "TEST" }],
+  ["cfT",          { email: EMAIL, password: PASSWORD, cfTurnstileResponse: "TEST" }],
+  ["confirm",      { email: EMAIL, password: PASSWORD, confirmPassword: PASSWORD }],
+  ["everything",   { email: EMAIL, password: PASSWORD, confirmPassword: PASSWORD, confirm: PASSWORD,
+                     name: "Tester", username: "tester", code: "TEST", inviteCode: "TEST",
+                     invite: "TEST", token: "TEST", captchaToken: "TEST",
+                     turnstileToken: "TEST", cfTurnstileResponse: "TEST" }],
 ];
-for (const route of ROUTES) {
+for (const route of ["/api/auth/register", "/api/auth/signup"]) {
   console.log(`\n  -- ${route}`);
-  for (const [label, obj] of VARIANTS) {
-    const r = await req(SITE + route, { method: "POST",
-      headers: { "content-type": "application/json" }, body: JSON.stringify(obj) });
-    console.log(`    ${String(r.s).padEnd(4)} json/${label.padEnd(9)} ${clean(r.b)}`);
-  }
-  const f = await req(SITE + route, { method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: `email=${encodeURIComponent(EMAIL)}&password=${encodeURIComponent(PASSWORD)}` });
-  console.log(`    ${String(f.s).padEnd(4)} form             ${clean(f.b)}`);
-
-  const qs = `?email=${encodeURIComponent(EMAIL)}&password=${encodeURIComponent(PASSWORD)}`;
-  const g = await req(SITE + route + qs);
-  console.log(`    ${String(g.s).padEnd(4)} GET+query        ${clean(g.b)}`);
-  const p2 = await req(SITE + route + qs, { method: "POST" });
-  console.log(`    ${String(p2.s).padEnd(4)} POST+query       ${clean(p2.b)}`);
+  for (const [label, o] of V) console.log(`    ${label.padEnd(14)} ${show(await req(SITE + route, J(o)))}`);
 }
 
-console.log("\n=== [5] LOGIN AFTER EACH ATTEMPT ===");
-const li = await req(`${SUPA}/auth/v1/token?grant_type=password`, {
-  method: "POST", headers: { apikey: ANON, "content-type": "application/json" },
-  body: JSON.stringify({ email: EMAIL, password: PASSWORD }) });
-console.log(`  ${li.s}  ${clean(li.b)}`);
+console.log("\n=== [4] EXTRA HEADERS ===");
+for (const h of [{ origin: SITE }, { "x-requested-with": "XMLHttpRequest" }, { accept: "application/json" }]) {
+  const r = await req(SITE + "/api/auth/register",
+    { ...J({ email: EMAIL, password: PASSWORD }), headers: { "content-type": "application/json", ...h } });
+  console.log(`  ${JSON.stringify(h).padEnd(42)} ${show(r)}`);
+}
